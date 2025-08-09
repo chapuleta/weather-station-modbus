@@ -29,6 +29,13 @@ uint8_t biruta_id = 0;
 bool anemometro_connected = false;
 bool biruta_connected = false;
 
+// Modo Simulador
+bool modo_simulador = false;
+uint8_t simulador_id = 1; // ID padrão para simulação
+String tipo_simulacao = "ANEMOMETRO"; // "ANEMOMETRO" ou "BIRUTA"
+uint16_t valor_simulado_principal = 0;
+uint16_t valor_simulado_secundario = 0;
+
 // Estrutura para dados dos sensores
 struct SensorData {
   float wind_speed = 0.0;
@@ -109,7 +116,8 @@ bool diagnosticoCompleto(ModbusMaster& node, uint8_t device_id, DeviceInfo& info
   
   // 1. TESTE DE COMUNICAÇÃO BÁSICA
   Serial.println("📡 1. Teste de Comunicação:");
-  uint8_t result = node.readHoldingRegisters(0x0000, 1);
+  // CORRIGIDO: usar readInputRegisters para dados (conforme manual)
+  uint8_t result = node.readInputRegisters(0x0000, 1);
   if (result == node.ku8MBSuccess) {
     uint16_t valor_principal = node.getResponseBuffer(0);
     Serial.printf("  ✅ Comunicação OK - Valor: %d\n", valor_principal);
@@ -151,7 +159,8 @@ bool diagnosticoCompleto(ModbusMaster& node, uint8_t device_id, DeviceInfo& info
   uint16_t valores[5];
   
   for (int i = 0; i < 5; i++) {
-    result = node.readHoldingRegisters(0x0000, 1);
+    // CORRIGIDO: usar readInputRegisters para dados (conforme manual)
+    result = node.readInputRegisters(0x0000, 1);
     if (result == node.ku8MBSuccess) {
       valores[i] = node.getResponseBuffer(0);
       leituras_validas++;
@@ -181,20 +190,22 @@ bool diagnosticoCompleto(ModbusMaster& node, uint8_t device_id, DeviceInfo& info
   // 4. TESTE DE REGISTRADORES SECUNDÁRIOS (se existirem)
   Serial.println("\n🔍 4. Registradores Secundários:");
   
-  // Para biruta: registrador 0x0001 (direção em graus)
-  result = node.readHoldingRegisters(0x0001, 1);
+  // Para biruta: registrador 0x0001 (direção em graus - conforme manual)
+  // CORRIGIDO: usar readInputRegisters para dados (conforme manual)
+  result = node.readInputRegisters(0x0001, 1);
   if (result == node.ku8MBSuccess) {
     uint16_t reg_secundario = node.getResponseBuffer(0);
     Serial.printf("  📐 Registrador 0x0001: %d\n", reg_secundario);
   } else {
-    Serial.printf("  ℹ️  Registrador 0x0001: não disponível (normal para anemômetro)\n");
+    Serial.printf("  ℹ️  Registrador 0x0001: não disponível\n");
   }
   
   // 5. TESTE DE TEMPO DE RESPOSTA
   Serial.println("\n⏱️  5. Performance de Comunicação:");
   
   unsigned long inicio = micros();
-  result = node.readHoldingRegisters(0x0000, 1);
+  // CORRIGIDO: usar readInputRegisters para dados (conforme manual)
+  result = node.readInputRegisters(0x0000, 1);
   unsigned long tempo_resposta = micros() - inicio;
   
   if (result == node.ku8MBSuccess) {
@@ -222,7 +233,8 @@ void testeStress(ModbusMaster& node, uint8_t device_id, int num_testes = 20) {
   
   for (int i = 0; i < num_testes; i++) {
     unsigned long inicio = millis();
-    uint8_t result = node.readHoldingRegisters(0x0000, 1);
+    // CORRIGIDO: usar readInputRegisters para dados (conforme manual)
+    uint8_t result = node.readInputRegisters(0x0000, 1);
     unsigned long duracao = millis() - inicio;
     
     tempo_total += duracao;
@@ -255,15 +267,15 @@ void testeStress(ModbusMaster& node, uint8_t device_id, int num_testes = 20) {
   }
 }
 
-// Função SEGURA para análise de dados conforme manuais
+// Função SEGURA para análise de dados conforme manuais EXATOS
 void analiseDados(uint8_t device_id, uint16_t valor_principal, uint16_t valor_secundario = 0) {
   Serial.printf("\n🔬 ANÁLISE DE DADOS - ID %d\n", device_id);
   
-  // Análise baseada nos manuais
-  if (valor_principal <= 7) {
-    // Likely wind direction sensor (biruta)
+  // Análise baseada EXCLUSIVAMENTE nos manuais
+  if (valor_principal <= 7 && valor_secundario > 0 && valor_secundario <= 360) {
+    // BIRUTA: Manual confirma 0x0000 (0-7) e 0x0001 (0-360°)
     Serial.println("  🧭 TIPO: Sensor de Direção (Biruta)");
-    Serial.printf("  📐 Direção bruta: %d\n", valor_principal);
+    Serial.printf("  📐 Direção bruta (0-7): %d\n", valor_principal);
     
     String direcoes[] = {"Norte (0°)", "Nordeste (45°)", "Leste (90°)", "Sudeste (135°)",
                         "Sul (180°)", "Sudoeste (225°)", "Oeste (270°)", "Noroeste (315°)"};
@@ -272,20 +284,21 @@ void analiseDados(uint8_t device_id, uint16_t valor_principal, uint16_t valor_se
       Serial.printf("  🧭 Direção: %s\n", direcoes[valor_principal].c_str());
     }
     
-    if (valor_secundario > 0 && valor_secundario <= 360) {
-      Serial.printf("  📐 Direção em graus: %d°\n", valor_secundario);
-    }
+    Serial.printf("  📐 Direção em graus: %d°\n", valor_secundario);
     
-    // Verificações de sanidade
+    // Verificações conforme manual da biruta
     if (valor_principal > 7) {
-      Serial.println("  ⚠️  ALERTA: Valor fora da faixa esperada (0-7)");
+      Serial.println("  ⚠️  ALERTA: Valor fora da faixa do manual (0-7)");
+    }
+    if (valor_secundario > 360) {
+      Serial.println("  ⚠️  ALERTA: Graus fora da faixa do manual (0-360°)");
     }
     
   } else {
-    // Likely wind speed sensor (anemometer)
+    // ANEMÔMETRO: Manual confirma apenas 0x0000 (valor × 10 = m/s)
     Serial.println("  💨 TIPO: Sensor de Velocidade (Anemômetro)");
     
-    float velocidade = valor_principal / 10.0;
+    float velocidade = valor_principal / 10.0; // Conforme manual: "valor × 10 = m/s real"
     Serial.printf("  💨 Velocidade: %.1f m/s\n", velocidade);
     
     // Conversões úteis
@@ -314,12 +327,12 @@ void analiseDados(uint8_t device_id, uint16_t valor_principal, uint16_t valor_se
     
     Serial.printf("  🌪️  Beaufort: %d (%s)\n", beaufort, descricao.c_str());
     
-    // Verificações de sanidade conforme manual (0-70 m/s)
+    // Verificações conforme manual do anemômetro (0-70 m/s)
     if (velocidade > 70) {
-      Serial.println("  ⚠️  ALERTA: Velocidade acima do limite do sensor (70 m/s)");
+      Serial.println("  ⚠️  ALERTA: Velocidade acima do limite do manual (70 m/s)");
     }
     if (valor_principal == 0) {
-      Serial.println("  ℹ️  INFO: Vento calmo ou sensor sem movimento");
+      Serial.println("  ℹ️  INFO: Vento calmo (≤0.2 m/s conforme manual)");
     }
   }
 }
@@ -349,10 +362,17 @@ bool detectarDispositivos() {
         diagnosticoCompleto(nodeAnemometro, test_id, device);
         
         // Tentar determinar o tipo baseado nos dados e análise detalhada
-        uint8_t result = nodeAnemometro.readHoldingRegisters(0x0000, 2);
+        // CORRIGIDO: usar readInputRegisters para dados (conforme manual)
+        uint8_t result = nodeAnemometro.readInputRegisters(0x0000, 1);
         if (result == nodeAnemometro.ku8MBSuccess) {
           uint16_t valor_principal = nodeAnemometro.getResponseBuffer(0);
-          uint16_t valor_secundario = nodeAnemometro.getResponseBuffer(1);
+          
+          // Tentar ler segundo registrador para biruta
+          uint16_t valor_secundario = 0;
+          uint8_t result2 = nodeAnemometro.readInputRegisters(0x0001, 1);
+          if (result2 == nodeAnemometro.ku8MBSuccess) {
+            valor_secundario = nodeAnemometro.getResponseBuffer(0);
+          }
           
           // Análise detalhada dos dados
           analiseDados(test_id, valor_principal, valor_secundario);
@@ -398,14 +418,26 @@ bool detectarDispositivos() {
 }
 
 // Leitura SEGURA do anemômetro
+// Leitura SEGURA do anemômetro conforme manual EXATO
 bool lerAnemometro() {
   if (!anemometro_connected) return false;
   
-  uint8_t result = nodeAnemometro.readHoldingRegisters(0x0000, 1);
+  Serial.printf("💨 Lendo anemômetro ID %d...\n", anemometro_id);
+  
+  nodeAnemometro.begin(anemometro_id, Serial2);
+  
+  // Manual do anemômetro especifica INPUT REGISTER 0x0000
+  uint8_t result = nodeAnemometro.readInputRegisters(0x0000, 1);
   
   if (result == nodeAnemometro.ku8MBSuccess) {
     uint16_t raw_value = nodeAnemometro.getResponseBuffer(0);
-    dados.wind_speed = raw_value / 10.0; // Valor dividido por 10 conforme manual
+    dados.wind_speed = raw_value / 10.0; // Manual: "valor × 10 = m/s real"
+    
+    // Validação conforme manual (0-70 m/s)
+    if (dados.wind_speed > 70.0) {
+      Serial.printf("⚠️  Velocidade acima do limite do manual (70 m/s): %.1f\n", dados.wind_speed);
+    }
+    
     return true;
   } else {
     Serial.printf("❌ Erro ao ler anemômetro: %02X\n", result);
@@ -413,21 +445,42 @@ bool lerAnemometro() {
   }
 }
 
-// Leitura SEGURA da biruta
+// Leitura SEGURA da biruta conforme manual EXATO
 bool lerBiruta() {
   if (!biruta_connected) return false;
   
-  uint8_t result = nodeBiruta.readHoldingRegisters(0x0000, 2);
+  // Manual da biruta especifica INPUT REGISTERS, não holding
+  Serial.printf("🧭 Lendo biruta ID %d...\n", biruta_id);
   
-  if (result == nodeBiruta.ku8MBSuccess) {
-    dados.wind_direction_raw = nodeBiruta.getResponseBuffer(0);
-    dados.wind_direction_degrees = nodeBiruta.getResponseBuffer(1);
-    dados.wind_direction_cardinal = getWindDirection(dados.wind_direction_raw);
-    return true;
-  } else {
-    Serial.printf("❌ Erro ao ler biruta: %02X\n", result);
+  nodeBiruta.begin(biruta_id, Serial2);
+  
+  // Ler registro 0x0000 (direção 0-7)
+  uint8_t result1 = nodeBiruta.readInputRegisters(0x0000, 1);
+  if (result1 != nodeBiruta.ku8MBSuccess) {
+    Serial.printf("❌ Erro ao ler registro 0x0000: %02X\n", result1);
     return false;
   }
+  dados.wind_direction_raw = nodeBiruta.getResponseBuffer(0);
+  
+  // Ler registro 0x0001 (direção em graus 0-360°)
+  uint8_t result2 = nodeBiruta.readInputRegisters(0x0001, 1);
+  if (result2 != nodeBiruta.ku8MBSuccess) {
+    Serial.printf("❌ Erro ao ler registro 0x0001: %02X\n", result2);
+    return false;
+  }
+  dados.wind_direction_degrees = nodeBiruta.getResponseBuffer(0);
+  
+  // Validações conforme manual
+  if (dados.wind_direction_raw > 7) {
+    Serial.printf("⚠️  Direção bruta fora da faixa (0-7): %d\n", dados.wind_direction_raw);
+  }
+  
+  if (dados.wind_direction_degrees > 360) {
+    Serial.printf("⚠️  Direção em graus fora da faixa (0-360): %d\n", dados.wind_direction_degrees);
+  }
+  
+  dados.wind_direction_cardinal = getWindDirection(dados.wind_direction_raw);
+  return true;
 }
 
 // Leitura de temperatura
@@ -530,6 +583,7 @@ void setup() {
   Serial.println("- 'info' - Mostrar dispositivos detectados");
   Serial.println("- 'status' - Status atual do sistema");
   Serial.println("- 'diag' - Diagnóstico completo dos sensores");
+  Serial.println("- 'config' - Ler configuração (0x07D0/0x07D1)");
   Serial.println("- 'stress' - Teste de stress de comunicação");
   Serial.println("- 'analise' - Análise detalhada dos dados atuais");
   Serial.println("===========================================");
@@ -559,6 +613,60 @@ void loop() {
       Serial.printf("  Baud Rate: %d bps\n", current_baud_rate);
       Serial.printf("  Dispositivos detectados: %d\n", num_dispositivos);
       Serial.printf("  Uptime: %lu ms\n", millis());
+      
+    } else if (comando == "config") {
+      Serial.println("⚙️  Lendo configuração dos sensores...");
+      
+      if (anemometro_connected) {
+        Serial.printf("🎯 Configuração do anemômetro (ID %d):\n", anemometro_id);
+        
+        // Registrador 0x07D0 - Device Address (ID) - HOLDING REGISTER
+        uint8_t result1 = nodeAnemometro.readHoldingRegisters(0x07D0, 1);
+        if (result1 == nodeAnemometro.ku8MBSuccess) {
+          uint16_t device_addr = nodeAnemometro.getResponseBuffer(0);
+          Serial.printf("  📍 Endereço configurado (0x07D0): %d\n", device_addr);
+        } else {
+          Serial.printf("  ❌ Erro lendo 0x07D0: %02X\n", result1);
+        }
+        
+        // Registrador 0x07D1 - Baud Rate - HOLDING REGISTER
+        uint8_t result2 = nodeAnemometro.readHoldingRegisters(0x07D1, 1);
+        if (result2 == nodeAnemometro.ku8MBSuccess) {
+          uint16_t baud_code = nodeAnemometro.getResponseBuffer(0);
+          String baud_names[] = {"2400", "4800", "9600", "19200", "38400", "57600", "115200", "1200"};
+          String baud_str = (baud_code <= 7) ? baud_names[baud_code] : "Inválido";
+          Serial.printf("  🔗 Baud Rate configurado (0x07D1): %s bps (código %d)\n", baud_str.c_str(), baud_code);
+        } else {
+          Serial.printf("  ❌ Erro lendo 0x07D1: %02X\n", result2);
+        }
+      }
+      
+      if (biruta_connected) {
+        Serial.printf("🎯 Configuração da biruta (ID %d):\n", biruta_id);
+        
+        // Biruta também pode ter registradores de configuração
+        uint8_t result1 = nodeBiruta.readHoldingRegisters(0x07D0, 1);
+        if (result1 == nodeBiruta.ku8MBSuccess) {
+          uint16_t device_addr = nodeBiruta.getResponseBuffer(0);
+          Serial.printf("  📍 Endereço configurado (0x07D0): %d\n", device_addr);
+        } else {
+          Serial.printf("  ❌ Erro lendo 0x07D0: %02X\n", result1);
+        }
+        
+        uint8_t result2 = nodeBiruta.readHoldingRegisters(0x07D1, 1);
+        if (result2 == nodeBiruta.ku8MBSuccess) {
+          uint16_t baud_code = nodeBiruta.getResponseBuffer(0);
+          String baud_names[] = {"2400", "4800", "9600", "19200", "38400", "57600", "115200", "1200"};
+          String baud_str = (baud_code <= 7) ? baud_names[baud_code] : "Inválido";
+          Serial.printf("  🔗 Baud Rate configurado (0x07D1): %s bps (código %d)\n", baud_str.c_str(), baud_code);
+        } else {
+          Serial.printf("  ❌ Erro lendo 0x07D1: %02X\n", result2);
+        }
+      }
+      
+      if (!anemometro_connected && !biruta_connected) {
+        Serial.println("❌ Nenhum sensor conectado para ler configuração!");
+      }
       
     } else if (comando == "diag") {
       Serial.println("🔬 Iniciando diagnóstico completo...");
@@ -598,7 +706,8 @@ void loop() {
       Serial.println("🔬 Análise detalhada dos dados atuais...");
       
       if (anemometro_connected) {
-        uint8_t result = nodeAnemometro.readHoldingRegisters(0x0000, 1);
+        // CORRIGIDO: usar readInputRegisters conforme manual
+        uint8_t result = nodeAnemometro.readInputRegisters(0x0000, 1);
         if (result == nodeAnemometro.ku8MBSuccess) {
           uint16_t valor = nodeAnemometro.getResponseBuffer(0);
           analiseDados(anemometro_id, valor);
@@ -606,17 +715,21 @@ void loop() {
       }
       
       if (biruta_connected) {
-        uint8_t result = nodeBiruta.readHoldingRegisters(0x0000, 2);
-        if (result == nodeBiruta.ku8MBSuccess) {
-          uint16_t valor1 = nodeBiruta.getResponseBuffer(0);
-          uint16_t valor2 = nodeBiruta.getResponseBuffer(1);
+        // CORRIGIDO: ler registros separadamente usando readInputRegisters
+        uint8_t result1 = nodeBiruta.readInputRegisters(0x0000, 1);
+        uint8_t result2 = nodeBiruta.readInputRegisters(0x0001, 1);
+        if (result1 == nodeBiruta.ku8MBSuccess && result2 == nodeBiruta.ku8MBSuccess) {
+          uint16_t valor1 = nodeBiruta.getResponseBuffer(0); // da primeira leitura
+          // Ler novamente para pegar o segundo valor
+          nodeBiruta.readInputRegisters(0x0001, 1);
+          uint16_t valor2 = nodeBiruta.getResponseBuffer(0);
           analiseDados(biruta_id, valor1, valor2);
         }
       }
       
     } else {
       Serial.println("❌ Comando não reconhecido.");
-      Serial.println("Comandos disponíveis: scan, info, status, diag, stress, analise");
+      Serial.println("Comandos disponíveis: scan, info, status, config, diag, stress, analise");
     }
   }
   
